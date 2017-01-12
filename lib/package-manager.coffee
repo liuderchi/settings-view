@@ -37,6 +37,22 @@ class PackageManager
     schema = atom.config.getSchema(packageName)
     schema? and (schema.type isnt 'any')
 
+  setProxyServers: (callback) =>
+    callback() if atom.config.get('core.useProxySettingsWhenCallingApm') isnt true
+    session = atom.getCurrentWindow().webContents.session
+    session.resolveProxy 'http://atom.io', (httpProxy) =>
+      @applyProxyToEnv 'http_proxy', httpProxy, () =>
+        session.resolveProxy 'https://atom.io', (httpsProxy) =>
+          @applyProxyToEnv 'https_proxy', httpsProxy, callback
+
+  applyProxyToEnv: (envName, proxy, callback) ->
+    return unless proxy?
+    proxy = proxy.split(' ')
+    switch proxy[0].trim().toUpperCase()
+      when 'DIRECT' then delete process.env[envName]
+      when 'PROXY'  then process.env[envName] = 'http://' + proxy[1]
+    callback()
+
   runCommand: (args, callback) ->
     command = atom.packages.getApmPath()
     outputLines = []
@@ -52,21 +68,22 @@ class PackageManager
   loadInstalled: (callback) ->
     args = ['ls', '--json']
     errorMessage = 'Fetching local packages failed.'
-    apmProcess = @runCommand args, (code, stdout, stderr) ->
-      if code is 0
-        try
-          packages = JSON.parse(stdout) ? []
-        catch parseError
-          error = createJsonParseError(errorMessage, parseError, stdout)
-          return callback(error)
-        callback(null, packages)
-      else
-        error = new Error(errorMessage)
-        error.stdout = stdout
-        error.stderr = stderr
-        callback(error)
+    @setProxyServers =>
+      apmProcess = @runCommand args, (code, stdout, stderr) ->
+        if code is 0
+          try
+            packages = JSON.parse(stdout) ? []
+          catch parseError
+            error = createJsonParseError(errorMessage, parseError, stdout)
+            return callback(error)
+          callback(null, packages)
+        else
+          error = new Error(errorMessage)
+          error.stdout = stdout
+          error.stderr = stderr
+          callback(error)
 
-    handleProcessErrors(apmProcess, errorMessage, callback)
+      handleProcessErrors(apmProcess, errorMessage, callback)
 
   loadFeatured: (loadThemes, callback) ->
     unless callback
@@ -79,22 +96,23 @@ class PackageManager
     args.push('--compatible', version) if semver.valid(version)
     errorMessage = 'Fetching featured packages failed.'
 
-    apmProcess = @runCommand args, (code, stdout, stderr) ->
-      if code is 0
-        try
-          packages = JSON.parse(stdout) ? []
-        catch parseError
-          error = createJsonParseError(errorMessage, parseError, stdout)
-          return callback(error)
+    @setProxyServers =>
+      apmProcess = @runCommand args, (code, stdout, stderr) ->
+        if code is 0
+          try
+            packages = JSON.parse(stdout) ? []
+          catch parseError
+            error = createJsonParseError(errorMessage, parseError, stdout)
+            return callback(error)
 
-        callback(null, packages)
-      else
-        error = new Error(errorMessage)
-        error.stdout = stdout
-        error.stderr = stderr
-        callback(error)
+          callback(null, packages)
+        else
+          error = new Error(errorMessage)
+          error.stdout = stdout
+          error.stderr = stderr
+          callback(error)
 
-    handleProcessErrors(apmProcess, errorMessage, callback)
+      handleProcessErrors(apmProcess, errorMessage, callback)
 
   loadOutdated: (callback) ->
     # Short circuit if we have cached data.
@@ -106,29 +124,30 @@ class PackageManager
     args.push('--compatible', version) if semver.valid(version)
     errorMessage = 'Fetching outdated packages and themes failed.'
 
-    apmProcess = @runCommand args, (code, stdout, stderr) =>
-      if code is 0
-        try
-          packages = JSON.parse(stdout) ? []
-        catch parseError
-          error = createJsonParseError(errorMessage, parseError, stdout)
-          return callback(error)
+    @setProxyServers =>
+      apmProcess = @runCommand args, (code, stdout, stderr) =>
+        if code is 0
+          try
+            packages = JSON.parse(stdout) ? []
+          catch parseError
+            error = createJsonParseError(errorMessage, parseError, stdout)
+            return callback(error)
 
-        @apmCache.loadOutdated =
-          value: packages
-          expiry: Date.now() + @CACHE_EXPIRY
+          @apmCache.loadOutdated =
+            value: packages
+            expiry: Date.now() + @CACHE_EXPIRY
 
-        for pack in packages
-          @emitPackageEvent 'update-available', pack
+          for pack in packages
+            @emitPackageEvent 'update-available', pack
 
-        callback(null, packages)
-      else
-        error = new Error(errorMessage)
-        error.stdout = stdout
-        error.stderr = stderr
-        callback(error)
+          callback(null, packages)
+        else
+          error = new Error(errorMessage)
+          error.stdout = stdout
+          error.stderr = stderr
+          callback(error)
 
-    handleProcessErrors(apmProcess, errorMessage, callback)
+      handleProcessErrors(apmProcess, errorMessage, callback)
 
   clearOutdatedCache: ->
     @apmCache.loadOutdated =
@@ -139,43 +158,45 @@ class PackageManager
     args = ['view', packageName, '--json']
     errorMessage = "Fetching package '#{packageName}' failed."
 
-    apmProcess = @runCommand args, (code, stdout, stderr) ->
-      if code is 0
-        try
-          packages = JSON.parse(stdout) ? []
-        catch parseError
-          error = createJsonParseError(errorMessage, parseError, stdout)
-          return callback(error)
+    @setProxyServers =>
+      apmProcess = @runCommand args, (code, stdout, stderr) ->
+        if code is 0
+          try
+            packages = JSON.parse(stdout) ? []
+          catch parseError
+            error = createJsonParseError(errorMessage, parseError, stdout)
+            return callback(error)
 
-        callback(null, packages)
-      else
-        error = new Error(errorMessage)
-        error.stdout = stdout
-        error.stderr = stderr
-        callback(error)
+          callback(null, packages)
+        else
+          error = new Error(errorMessage)
+          error.stdout = stdout
+          error.stderr = stderr
+          callback(error)
 
-    handleProcessErrors(apmProcess, errorMessage, callback)
+      handleProcessErrors(apmProcess, errorMessage, callback)
 
   loadCompatiblePackageVersion: (packageName, callback) ->
     args = ['view', packageName, '--json', '--compatible', @normalizeVersion(atom.getVersion())]
     errorMessage = "Fetching package '#{packageName}' failed."
 
-    apmProcess = @runCommand args, (code, stdout, stderr) ->
-      if code is 0
-        try
-          packages = JSON.parse(stdout) ? []
-        catch parseError
-          error = createJsonParseError(errorMessage, parseError, stdout)
-          return callback(error)
+    @setProxyServers =>
+      apmProcess = @runCommand args, (code, stdout, stderr) ->
+        if code is 0
+          try
+            packages = JSON.parse(stdout) ? []
+          catch parseError
+            error = createJsonParseError(errorMessage, parseError, stdout)
+            return callback(error)
 
-        callback(null, packages)
-      else
-        error = new Error(errorMessage)
-        error.stdout = stdout
-        error.stderr = stderr
-        callback(error)
+          callback(null, packages)
+        else
+          error = new Error(errorMessage)
+          error.stdout = stdout
+          error.stderr = stderr
+          callback(error)
 
-    handleProcessErrors(apmProcess, errorMessage, callback)
+      handleProcessErrors(apmProcess, errorMessage, callback)
 
   getInstalled: ->
     new Promise (resolve, reject) =>
@@ -227,26 +248,27 @@ class PackageManager
         args.push '--packages'
       errorMessage = "Searching for \u201C#{query}\u201D failed."
 
-      apmProcess = @runCommand args, (code, stdout, stderr) ->
-        if code is 0
-          try
-            packages = JSON.parse(stdout) ? []
-            if options.sortBy
-              packages = _.sortBy packages, (pkg) ->
-                return pkg[options.sortBy]*-1
+      @setProxyServers =>
+        apmProcess = @runCommand args, (code, stdout, stderr) ->
+          if code is 0
+            try
+              packages = JSON.parse(stdout) ? []
+              if options.sortBy
+                packages = _.sortBy packages, (pkg) ->
+                  return pkg[options.sortBy]*-1
 
-            resolve(packages)
-          catch parseError
-            error = createJsonParseError(errorMessage, parseError, stdout)
+              resolve(packages)
+            catch parseError
+              error = createJsonParseError(errorMessage, parseError, stdout)
+              reject(error)
+          else
+            error = new Error(errorMessage)
+            error.stdout = stdout
+            error.stderr = stderr
             reject(error)
-        else
-          error = new Error(errorMessage)
-          error.stdout = stdout
-          error.stderr = stderr
-          reject(error)
 
-      handleProcessErrors apmProcess, errorMessage, (error) ->
-        reject(error)
+        handleProcessErrors apmProcess, errorMessage, (error) ->
+          reject(error)
 
   update: (pack, newVersion, callback) ->
     {name, theme, apmInstallSource} = pack
@@ -277,8 +299,9 @@ class PackageManager
         onError(error)
 
     @emitPackageEvent 'updating', pack
-    apmProcess = @runCommand(args, exit)
-    handleProcessErrors(apmProcess, errorMessage, onError)
+    @setProxyServers =>
+      apmProcess = @runCommand(args, exit)
+      handleProcessErrors(apmProcess, errorMessage, onError)
 
   unload: (name) ->
     if atom.packages.isPackageLoaded(name)
@@ -325,8 +348,9 @@ class PackageManager
         onError(error)
 
     @emitPackageEvent('installing', pack)
-    apmProcess = @runCommand(args, exit)
-    handleProcessErrors(apmProcess, errorMessage, onError)
+    @setProxyServers =>
+      apmProcess = @runCommand(args, exit)
+      handleProcessErrors(apmProcess, errorMessage, onError)
 
   uninstall: (pack, callback) ->
     {name} = pack
@@ -339,20 +363,21 @@ class PackageManager
       callback?(error)
 
     @emitPackageEvent('uninstalling', pack)
-    apmProcess = @runCommand ['uninstall', '--hard', name], (code, stdout, stderr) =>
-      if code is 0
-        @clearOutdatedCache()
-        @unload(name)
-        @removePackageNameFromDisabledPackages(name)
-        callback?()
-        @emitPackageEvent 'uninstalled', pack
-      else
-        error = new Error(errorMessage)
-        error.stdout = stdout
-        error.stderr = stderr
-        onError(error)
+    @setProxyServers =>
+      apmProcess = @runCommand ['uninstall', '--hard', name], (code, stdout, stderr) =>
+        if code is 0
+          @clearOutdatedCache()
+          @unload(name)
+          @removePackageNameFromDisabledPackages(name)
+          callback?()
+          @emitPackageEvent 'uninstalled', pack
+        else
+          error = new Error(errorMessage)
+          error.stdout = stdout
+          error.stderr = stderr
+          onError(error)
 
-    handleProcessErrors(apmProcess, errorMessage, onError)
+      handleProcessErrors(apmProcess, errorMessage, onError)
 
   installAlternative: (pack, alternativePackageName, callback) ->
     eventArg = {pack, alternative: alternativePackageName}
@@ -397,15 +422,16 @@ class PackageManager
 
   checkNativeBuildTools: ->
     new Promise (resolve, reject) =>
-      apmProcess = @runCommand ['install', '--check'], (code, stdout, stderr) ->
-        if code is 0
-          resolve()
-        else
-          reject(new Error())
+      @setProxyServers =>
+        apmProcess = @runCommand ['install', '--check'], (code, stdout, stderr) ->
+          if code is 0
+            resolve()
+          else
+            reject(new Error())
 
-      apmProcess.onWillThrowError ({error, handle}) ->
-        handle()
-        reject(error)
+        apmProcess.onWillThrowError ({error, handle}) ->
+          handle()
+          reject(error)
 
   removePackageNameFromDisabledPackages: (packageName) ->
     atom.config.removeAtKeyPath('core.disabledPackages', packageName)
