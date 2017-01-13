@@ -41,7 +41,7 @@ class PackageManager
     callback() if atom.config.get('core.useProxySettingsWhenCallingApm') isnt true
     session = atom.getCurrentWindow().webContents.session
     session.resolveProxy 'http://atom.io', (httpProxy) =>
-      @applyProxyToEnv 'http_proxy', httpProxy, () =>
+      @applyProxyToEnv 'http_proxy', httpProxy, =>
         session.resolveProxy 'https://atom.io', (httpsProxy) =>
           @applyProxyToEnv 'https_proxy', httpsProxy, callback
 
